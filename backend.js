@@ -1,5 +1,4 @@
 const express = require("express");
-const puppeteer = require("puppeteer");
 const cron = require("node-cron");
 
 const app = express();
@@ -22,54 +21,74 @@ const contratosKC = [
   { nome: "Futuro", url: "https://www.investing.com/commodities/us-coffee-c?cid=1186962" }
 ];
 
-// ---------------- BROWSER ----------------
+const isProd = process.env.NODE_ENV === "production";
+
+// ---------------- BROWSER (HÍBRIDO) ----------------
 async function criarBrowser() {
-  return await puppeteer.launch({
-    headless: "new",
-    args: [
-      "--no-sandbox",
-      "--disable-setuid-sandbox",
-      "--disable-dev-shm-usage",
-      "--disable-blink-features=AutomationControlled"
-    ]
+
+  // 💻 LOCAL (Windows)
+  if (!isProd) {
+    const puppeteer = require("puppeteer");
+
+    return await puppeteer.launch({
+      headless: "new",
+      args: ["--no-sandbox", "--disable-setuid-sandbox"]
+    });
+  }
+
+  // 🚀 PRODUÇÃO (Railway)
+  const puppeteerCore = require("puppeteer-core");
+  const chromium = require("@sparticuz/chromium");
+
+  return await puppeteerCore.launch({
+    args: chromium.args,
+    executablePath: await chromium.executablePath(),
+    headless: chromium.headless,
   });
 }
 
-// ---------------- PEGAR PREÇO ----------------
-async function pegarPreco(browser, url) {
+// ---------------- PAGE SAFE ----------------
+async function executarComPage(browser, url, callback) {
   const page = await browser.newPage();
 
   try {
-    console.log("Abrindo:", url);
-
     await page.setUserAgent(
       "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36"
     );
 
-    await page.setExtraHTTPHeaders({
-      "accept-language": "en-US,en;q=0.9"
-    });
-
     await page.goto(url, {
       waitUntil: "domcontentloaded",
-      timeout: 30000
+      timeout: 20000
     });
 
-    // 🔥 CORREÇÃO AQUI (sem waitForTimeout)
-    await new Promise(r => setTimeout(r, 3000));
+    await page.waitForSelector("body", { timeout: 5000 });
+
+    return await callback(page);
+
+  } catch (err) {
+    console.log("Erro page:", err.message);
+    return null;
+
+  } finally {
+    await page.close();
+  }
+}
+
+// ---------------- PEGAR PREÇO ----------------
+async function pegarPreco(browser, url) {
+  return await executarComPage(browser, url, async (page) => {
 
     const preco = await page.evaluate(() => {
       const seletores = [
         '[data-test="instrument-price-last"]',
         'span[data-test="instrument-price-last"]',
         '.text-2xl',
-        '.instrument-price_last__KQzyA',
         '.last-price-value'
       ];
 
       for (let s of seletores) {
         const el = document.querySelector(s);
-        if (el && el.innerText) {
+        if (el?.innerText) {
           const valor = parseFloat(el.innerText.replace(",", ""));
           if (!isNaN(valor)) return valor;
         }
@@ -78,20 +97,22 @@ async function pegarPreco(browser, url) {
       return null;
     });
 
-    console.log("Preço:", preco);
     return preco;
-
-  } catch (err) {
-    console.log("Erro preço:", err.message);
-    return null;
-
-  } finally {
-    await page.close();
-  }
+  });
 }
+
+// ---------------- LOCK ----------------
+let rodando = false;
 
 // ---------------- ATUALIZAR ----------------
 async function atualizarDados() {
+  if (rodando) {
+    console.log("Já está rodando, ignorando...");
+    return;
+  }
+
+  rodando = true;
+
   try {
     console.log("Atualizando dados...");
 
@@ -100,12 +121,13 @@ async function atualizarDados() {
     const resultadosRC = [];
     const resultadosKC = [];
 
-    for (let c of contratosRC) {
+    // 🔥 SEQUENCIAL (estável no Railway)
+    for (const c of contratosRC) {
       const preco = await pegarPreco(browser, c.url);
       resultadosRC.push({ nome: c.nome, preco });
     }
 
-    for (let c of contratosKC) {
+    for (const c of contratosKC) {
       const preco = await pegarPreco(browser, c.url);
       resultadosKC.push({ nome: c.nome, preco });
     }
@@ -124,6 +146,9 @@ async function atualizarDados() {
 
   } catch (e) {
     console.log("Erro geral:", e.message);
+
+  } finally {
+    rodando = false;
   }
 }
 
@@ -136,8 +161,10 @@ app.get("/precos", (req, res) => {
   res.json(dados);
 });
 
-// ---------------- CRON 5 MIN ----------------
-cron.schedule("*/5 * * * *", atualizarDados);
+// ---------------- CRON ----------------
+cron.schedule("*/5 * * * *", () => {
+  atualizarDados();
+});
 
 // ---------------- START ----------------
 const PORT = process.env.PORT || 3000;
