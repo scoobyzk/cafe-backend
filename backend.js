@@ -10,9 +10,6 @@ let dados = {
   atualizadoEm: null
 };
 
-// 🔒 trava anti-duplicação
-let atualizando = false;
-
 const contratosRC = [
   { nome: "Atual", url: "https://www.investing.com/commodities/london-coffee?cid=1185510" },
   { nome: "Proximo", url: "https://www.investing.com/commodities/london-coffee?cid=1185511" },
@@ -25,39 +22,40 @@ const contratosKC = [
   { nome: "Futuro", url: "https://www.investing.com/commodities/us-coffee-c?cid=1186962" }
 ];
 
-// ---------------- PUPPETEER ----------------
+// ---------------- BROWSER ----------------
 async function criarBrowser() {
-  try {
-    return await puppeteer.launch({
-      headless: "new",
-      args: [
-        "--no-sandbox",
-        "--disable-setuid-sandbox",
-        "--disable-dev-shm-usage",
-        "--disable-blink-features=AutomationControlled"
-      ]
-    });
-  } catch (e) {
-    console.log("Erro Chrome:", e.message);
-    return null;
-  }
+  return await puppeteer.launch({
+    headless: "new",
+    args: [
+      "--no-sandbox",
+      "--disable-setuid-sandbox",
+      "--disable-dev-shm-usage",
+      "--disable-blink-features=AutomationControlled"
+    ]
+  });
 }
 
 // ---------------- PEGAR PREÇO ----------------
-async function pegarPreco(page, url) {
+async function pegarPreco(browser, url) {
+  const page = await browser.newPage();
+
   try {
     console.log("Abrindo:", url);
 
-    await page.goto(url, {
-      waitUntil: "domcontentloaded",
-      timeout: 60000
-    });
+    await page.setUserAgent(
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36"
+    );
 
     await page.setExtraHTTPHeaders({
       "accept-language": "en-US,en;q=0.9"
     });
 
-    await new Promise(r => setTimeout(r, 5000));
+    await page.goto(url, {
+      waitUntil: "domcontentloaded",
+      timeout: 30000
+    });
+
+    await page.waitForTimeout(3000);
 
     const preco = await page.evaluate(() => {
       const seletores = [
@@ -71,8 +69,7 @@ async function pegarPreco(page, url) {
       for (let s of seletores) {
         const el = document.querySelector(s);
         if (el && el.innerText) {
-          const texto = el.innerText.replace(",", "").trim();
-          const valor = parseFloat(texto);
+          const valor = parseFloat(el.innerText.replace(",", ""));
           if (!isNaN(valor)) return valor;
         }
       }
@@ -86,40 +83,29 @@ async function pegarPreco(page, url) {
   } catch (err) {
     console.log("Erro preço:", err.message);
     return null;
+
+  } finally {
+    await page.close();
   }
 }
 
-// ---------------- ATUALIZAR DADOS ----------------
+// ---------------- ATUALIZAR ----------------
 async function atualizarDados() {
-  if (atualizando) {
-    console.log("Atualização já em andamento...");
-    return;
-  }
-
-  atualizando = true;
-
   try {
     console.log("Atualizando dados...");
 
     const browser = await criarBrowser();
-    if (!browser) return;
-
-    const page = await browser.newPage();
-
-    await page.setUserAgent(
-      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36"
-    );
 
     const resultadosRC = [];
     const resultadosKC = [];
 
     for (let c of contratosRC) {
-      const preco = await pegarPreco(page, c.url);
+      const preco = await pegarPreco(browser, c.url);
       resultadosRC.push({ nome: c.nome, preco });
     }
 
     for (let c of contratosKC) {
-      const preco = await pegarPreco(page, c.url);
+      const preco = await pegarPreco(browser, c.url);
       resultadosKC.push({ nome: c.nome, preco });
     }
 
@@ -138,13 +124,11 @@ async function atualizarDados() {
   } catch (e) {
     console.log("Erro geral:", e.message);
   }
-
-  atualizando = false;
 }
 
 // ---------------- ROTAS ----------------
 app.get("/", (req, res) => {
-  res.send("API de Café rodando 🚀 use /precos");
+  res.send("API de Café rodando 🚀");
 });
 
 app.get("/precos", (req, res) => {
@@ -154,7 +138,7 @@ app.get("/precos", (req, res) => {
 // ---------------- CRON (5 MINUTOS) ----------------
 cron.schedule("*/5 * * * *", atualizarDados);
 
-// ---------------- SERVER ----------------
+// ---------------- START ----------------
 const PORT = process.env.PORT || 3000;
 
 app.listen(PORT, () => {
