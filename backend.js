@@ -1,0 +1,163 @@
+const express = require("express");
+const puppeteer = require("puppeteer");
+const cron = require("node-cron");
+
+const app = express();
+
+let dados = {
+  arabica: [],
+  robusta: [],
+  atualizadoEm: null
+};
+
+// 🔒 trava anti-duplicação
+let atualizando = false;
+
+const contratosRC = [
+  { nome: "Atual", url: "https://www.investing.com/commodities/london-coffee?cid=1185510" },
+  { nome: "Proximo", url: "https://www.investing.com/commodities/london-coffee?cid=1185511" },
+  { nome: "Futuro", url: "https://www.investing.com/commodities/london-coffee?cid=1185512" }
+];
+
+const contratosKC = [
+  { nome: "Atual", url: "https://www.investing.com/commodities/us-coffee-c" },
+  { nome: "Proximo", url: "https://www.investing.com/commodities/us-coffee-c?cid=1186961" },
+  { nome: "Futuro", url: "https://www.investing.com/commodities/us-coffee-c?cid=1186962" }
+];
+
+// ---------------- PUPPETEER ----------------
+async function criarBrowser() {
+  try {
+    return await puppeteer.launch({
+      headless: "new",
+      args: [
+        "--no-sandbox",
+        "--disable-setuid-sandbox",
+        "--disable-dev-shm-usage",
+        "--disable-blink-features=AutomationControlled"
+      ]
+    });
+  } catch (e) {
+    console.log("Erro Chrome:", e.message);
+    return null;
+  }
+}
+
+// ---------------- PEGAR PREÇO ----------------
+async function pegarPreco(page, url) {
+  try {
+    console.log("Abrindo:", url);
+
+    await page.goto(url, {
+      waitUntil: "domcontentloaded",
+      timeout: 60000
+    });
+
+    await page.setExtraHTTPHeaders({
+      "accept-language": "en-US,en;q=0.9"
+    });
+
+    await new Promise(r => setTimeout(r, 5000));
+
+    const preco = await page.evaluate(() => {
+      const seletores = [
+        '[data-test="instrument-price-last"]',
+        'span[data-test="instrument-price-last"]',
+        '.text-2xl',
+        '.instrument-price_last__KQzyA',
+        '.last-price-value'
+      ];
+
+      for (let s of seletores) {
+        const el = document.querySelector(s);
+        if (el && el.innerText) {
+          const texto = el.innerText.replace(",", "").trim();
+          const valor = parseFloat(texto);
+          if (!isNaN(valor)) return valor;
+        }
+      }
+
+      return null;
+    });
+
+    console.log("Preço:", preco);
+    return preco;
+
+  } catch (err) {
+    console.log("Erro preço:", err.message);
+    return null;
+  }
+}
+
+// ---------------- ATUALIZAR DADOS ----------------
+async function atualizarDados() {
+  if (atualizando) {
+    console.log("Atualização já em andamento...");
+    return;
+  }
+
+  atualizando = true;
+
+  try {
+    console.log("Atualizando dados...");
+
+    const browser = await criarBrowser();
+    if (!browser) return;
+
+    const page = await browser.newPage();
+
+    await page.setUserAgent(
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36"
+    );
+
+    const resultadosRC = [];
+    const resultadosKC = [];
+
+    for (let c of contratosRC) {
+      const preco = await pegarPreco(page, c.url);
+      resultadosRC.push({ nome: c.nome, preco });
+    }
+
+    for (let c of contratosKC) {
+      const preco = await pegarPreco(page, c.url);
+      resultadosKC.push({ nome: c.nome, preco });
+    }
+
+    await browser.close();
+
+    dados = {
+      arabica: resultadosKC,
+      robusta: resultadosRC,
+      atualizadoEm: new Date().toLocaleString("pt-BR", {
+        timeZone: "America/Sao_Paulo"
+      })
+    };
+
+    console.log("Atualizado com sucesso!");
+
+  } catch (e) {
+    console.log("Erro geral:", e.message);
+  }
+
+  atualizando = false;
+}
+
+// ---------------- ROTAS ----------------
+app.get("/", (req, res) => {
+  res.send("API de Café rodando 🚀 use /precos");
+});
+
+app.get("/precos", (req, res) => {
+  res.json(dados);
+});
+
+// ---------------- CRON (5 MINUTOS) ----------------
+cron.schedule("*/5 * * * *", atualizarDados);
+
+// ---------------- SERVER ----------------
+const PORT = process.env.PORT || 3000;
+
+app.listen(PORT, () => {
+  console.log(`Servidor rodando na porta ${PORT}`);
+  atualizarDados();
+});
