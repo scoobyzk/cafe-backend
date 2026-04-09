@@ -55,7 +55,8 @@ async function pegarPreco(browser, url) {
       timeout: 30000
     });
 
-    await page.waitForTimeout(3000);
+    // 🔥 CORREÇÃO AQUI (sem waitForTimeout)
+    await new Promise(r => setTimeout(r, 3000));
 
     const preco = await page.evaluate(() => {
       const seletores = [
@@ -135,7 +136,7 @@ app.get("/precos", (req, res) => {
   res.json(dados);
 });
 
-// ---------------- CRON (5 MINUTOS) ----------------
+// ---------------- CRON 5 MIN ----------------
 cron.schedule("*/5 * * * *", atualizarDados);
 
 // ---------------- START ----------------
