@@ -47,16 +47,16 @@ async function criarBrowser() {
   });
 }
 
-// ---------------- FORMATAR PREÇO ----------------
+// ---------------- FORMATAR PREÇO (STRING PRA NÃO PERDER ZERO) ----------------
 function formatarPreco(valor) {
   if (valor < 10) {
-    return Number(valor.toFixed(3));
+    return valor.toFixed(3); // 🔥 mantém 3.310
   } else {
-    return Number(valor.toFixed(2));
+    return valor.toFixed(2); // 🔥 mantém 276.30
   }
 }
 
-// ---------------- PEGAR PREÇO (MODO BRUTO) ----------------
+// ---------------- PEGAR PREÇO ----------------
 async function pegarPreco(browser, url) {
   const page = await browser.newPage();
 
@@ -81,7 +81,7 @@ async function pegarPreco(browser, url) {
       timeout: 60000
     });
 
-    // 🔥 ESPERA BRUTA
+    // 🔥 ESPERA BRUTA (SEM ERRO)
     await new Promise(r => setTimeout(r, 5000));
 
     let preco = await page.evaluate(() => {
@@ -119,15 +119,16 @@ async function pegarPreco(browser, url) {
 
     // 🔥 CACHE + FORMATAÇÃO
     if (preco !== null) {
-      preco = formatarPreco(preco);
-      cache[url] = preco;
+      const precoFormatado = formatarPreco(preco);
+      cache[url] = precoFormatado;
+      console.log("Preço:", url, precoFormatado);
+      return precoFormatado;
     } else if (cache[url]) {
-      preco = cache[url];
+      console.log("Usando cache:", url, cache[url]);
+      return cache[url];
     }
 
-    console.log("Preço:", url, preco);
-
-    return preco;
+    return null;
 
   } catch (err) {
     console.log("Erro preço:", err.message);
