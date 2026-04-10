@@ -50,13 +50,13 @@ async function criarBrowser() {
 // ---------------- FORMATAR PREÇO ----------------
 function formatarPreco(valor) {
   if (valor < 10) {
-    return Number(valor.toFixed(3)); // 3.310
+    return Number(valor.toFixed(3));
   } else {
-    return Number(valor.toFixed(2)); // 276.30 / 293.50
+    return Number(valor.toFixed(2));
   }
 }
 
-// ---------------- PEGAR PREÇO (BLINDADO) ----------------
+// ---------------- PEGAR PREÇO (MODO BRUTO) ----------------
 async function pegarPreco(browser, url) {
   const page = await browser.newPage();
 
@@ -65,17 +65,24 @@ async function pegarPreco(browser, url) {
       "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36"
     );
 
-    await page.goto(url, {
-      waitUntil: "domcontentloaded",
-      timeout: 30000
+    // 🔥 BLOQUEIA LIXO PESADO
+    await page.setRequestInterception(true);
+    page.on("request", (req) => {
+      const tipo = req.resourceType();
+      if (["image", "stylesheet", "font", "media"].includes(tipo)) {
+        req.abort();
+      } else {
+        req.continue();
+      }
     });
 
-    await page.waitForFunction(() => {
-      const el = document.querySelector('[data-test="instrument-price-last"]');
-      return el && el.innerText && el.innerText.length > 1;
-    }, { timeout: 15000 });
+    await page.goto(url, {
+      waitUntil: "domcontentloaded",
+      timeout: 60000
+    });
 
-    await new Promise(r => setTimeout(r, 3000));
+    // 🔥 ESPERA BRUTA
+    await new Promise(r => setTimeout(r, 5000));
 
     let preco = await page.evaluate(() => {
       const el =
