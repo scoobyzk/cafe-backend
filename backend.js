@@ -9,6 +9,9 @@ let dados = {
   atualizadoEm: null
 };
 
+// 🔥 CACHE PRA NUNCA MAIS VOLTAR NULL
+let cache = {};
+
 const contratosRC = [
   { nome: "Atual", url: "https://www.investing.com/commodities/london-coffee?cid=1185510" },
   { nome: "Proximo", url: "https://www.investing.com/commodities/london-coffee?cid=1185511" },
@@ -23,10 +26,8 @@ const contratosKC = [
 
 const isProd = process.env.NODE_ENV === "production";
 
-// ---------------- BROWSER (HÍBRIDO) ----------------
+// ---------------- BROWSER ----------------
 async function criarBrowser() {
-
-  // 💻 LOCAL (Windows)
   if (!isProd) {
     const puppeteer = require("puppeteer");
 
@@ -36,7 +37,6 @@ async function criarBrowser() {
     });
   }
 
-  // 🚀 PRODUÇÃO (Railway)
   const puppeteerCore = require("puppeteer-core");
   const chromium = require("@sparticuz/chromium");
 
@@ -47,8 +47,17 @@ async function criarBrowser() {
   });
 }
 
-// ---------------- PAGE SAFE ----------------
-async function executarComPage(browser, url, callback) {
+// ---------------- FORMATAR PREÇO ----------------
+function formatarPreco(valor) {
+  if (valor < 10) {
+    return Number(valor.toFixed(3)); // 3.310
+  } else {
+    return Number(valor.toFixed(2)); // 276.30 / 293.50
+  }
+}
+
+// ---------------- PEGAR PREÇO (BLINDADO) ----------------
+async function pegarPreco(browser, url) {
   const page = await browser.newPage();
 
   try {
@@ -58,47 +67,68 @@ async function executarComPage(browser, url, callback) {
 
     await page.goto(url, {
       waitUntil: "domcontentloaded",
-      timeout: 20000
+      timeout: 30000
     });
 
-    await page.waitForSelector("body", { timeout: 5000 });
+    await page.waitForFunction(() => {
+      const el = document.querySelector('[data-test="instrument-price-last"]');
+      return el && el.innerText && el.innerText.length > 1;
+    }, { timeout: 15000 });
 
-    return await callback(page);
+    await new Promise(r => setTimeout(r, 3000));
+
+    let preco = await page.evaluate(() => {
+      const el =
+        document.querySelector('[data-test="instrument-price-last"]') ||
+        document.querySelector('.text-2xl') ||
+        document.querySelector('.last-price-value');
+
+      if (!el) return null;
+
+      const texto = el.innerText.replace(/[^\d.,]/g, '').replace(',', '.');
+      const valor = parseFloat(texto);
+
+      return isNaN(valor) ? null : valor;
+    });
+
+    // 🔥 RETRY
+    if (preco === null) {
+      await new Promise(r => setTimeout(r, 3000));
+
+      preco = await page.evaluate(() => {
+        const el =
+          document.querySelector('[data-test="instrument-price-last"]') ||
+          document.querySelector('.text-2xl') ||
+          document.querySelector('.last-price-value');
+
+        if (!el) return null;
+
+        const texto = el.innerText.replace(/[^\d.,]/g, '').replace(',', '.');
+        const valor = parseFloat(texto);
+
+        return isNaN(valor) ? null : valor;
+      });
+    }
+
+    // 🔥 CACHE + FORMATAÇÃO
+    if (preco !== null) {
+      preco = formatarPreco(preco);
+      cache[url] = preco;
+    } else if (cache[url]) {
+      preco = cache[url];
+    }
+
+    console.log("Preço:", url, preco);
+
+    return preco;
 
   } catch (err) {
-    console.log("Erro page:", err.message);
-    return null;
+    console.log("Erro preço:", err.message);
+    return cache[url] || null;
 
   } finally {
     await page.close();
   }
-}
-
-// ---------------- PEGAR PREÇO ----------------
-async function pegarPreco(browser, url) {
-  return await executarComPage(browser, url, async (page) => {
-
-    const preco = await page.evaluate(() => {
-      const seletores = [
-        '[data-test="instrument-price-last"]',
-        'span[data-test="instrument-price-last"]',
-        '.text-2xl',
-        '.last-price-value'
-      ];
-
-      for (let s of seletores) {
-        const el = document.querySelector(s);
-        if (el?.innerText) {
-          const valor = parseFloat(el.innerText.replace(",", ""));
-          if (!isNaN(valor)) return valor;
-        }
-      }
-
-      return null;
-    });
-
-    return preco;
-  });
 }
 
 // ---------------- LOCK ----------------
@@ -121,7 +151,6 @@ async function atualizarDados() {
     const resultadosRC = [];
     const resultadosKC = [];
 
-    // 🔥 SEQUENCIAL (estável no Railway)
     for (const c of contratosRC) {
       const preco = await pegarPreco(browser, c.url);
       resultadosRC.push({ nome: c.nome, preco });
