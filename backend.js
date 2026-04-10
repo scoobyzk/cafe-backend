@@ -12,10 +12,12 @@ let dados = {
 let cache = {};
 let browserGlobal = null;
 
+// ===================== CONTRATOS =====================
+
 const contratosRC = [
-  { nome: "Atual", url: "https://www.investing.com/commodities/london-coffee?cid=1185510" },
-  { nome: "Proximo", url: "https://www.investing.com/commodities/london-coffee?cid=1185511" },
-  { nome: "Futuro", url: "https://www.investing.com/commodities/london-coffee?cid=1185512" }
+  { nome: "Maio", url: "https://www.tradingview.com/symbols/ICEEUR-RC1!/?contract=RCK2026", simbolo: "RCK2026" },
+  { nome: "Julho", url: "https://www.tradingview.com/symbols/ICEEUR-RC1!/?contract=RCN2026", simbolo: "RCN2026" },
+  { nome: "Setembro", url: "https://www.tradingview.com/symbols/ICEEUR-RC1!/?contract=RCU2026", simbolo: "RCU2026" }
 ];
 
 const contratosKC = [
@@ -24,14 +26,16 @@ const contratosKC = [
   { nome: "Futuro", url: "https://www.investing.com/commodities/us-coffee-c?cid=1186962" }
 ];
 
+// ===================== UTIL =====================
+
 const isProd = process.env.NODE_ENV === "production";
 
-// ---------------- DELAY COMPATÍVEL (SUBSTITUI waitForTimeout) ----------------
 function delay(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-// ---------------- BROWSER ----------------
+// ===================== BROWSER =====================
+
 async function criarBrowser() {
   if (browserGlobal) return browserGlobal;
 
@@ -40,11 +44,7 @@ async function criarBrowser() {
 
     browserGlobal = await puppeteer.launch({
       headless: "new",
-      args: [
-        "--no-sandbox",
-        "--disable-setuid-sandbox",
-        "--disable-dev-shm-usage"
-      ]
+      args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"]
     });
 
   } else {
@@ -52,12 +52,7 @@ async function criarBrowser() {
     const chromium = require("@sparticuz/chromium");
 
     browserGlobal = await puppeteerCore.launch({
-      args: [
-        ...chromium.args,
-        "--no-sandbox",
-        "--disable-setuid-sandbox",
-        "--disable-dev-shm-usage"
-      ],
+      args: [...chromium.args, "--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"],
       executablePath: await chromium.executablePath(),
       headless: chromium.headless,
     });
@@ -66,14 +61,16 @@ async function criarBrowser() {
   return browserGlobal;
 }
 
-// ---------------- FORMATAR ----------------
+// ===================== FORMATAR =====================
+
 function formatarPreco(valor) {
   if (valor < 10) return valor.toFixed(3);
   return valor.toFixed(2);
 }
 
-// ---------------- PEGAR PREÇO (ROBUSTO FINAL) ----------------
-async function pegarPreco(browser, url) {
+// ===================== SCRAPER =====================
+
+async function pegarPreco(browser, url, simbolo = null) {
   const page = await browser.newPage();
 
   try {
@@ -96,13 +93,48 @@ async function pegarPreco(browser, url) {
       timeout: 60000
     });
 
-    // 🔥 delay seguro (substitui waitForTimeout)
+    // ===================== TRADINGVIEW (FIX REAL) =====================
+    if (url.includes("tradingview.com")) {
+
+      await page.waitForSelector("body");
+
+      await page.waitForFunction((simbolo) => {
+        const el = document.querySelector(".js-symbol-last, span[class*='last']");
+        return el && el.innerText && el.innerText.length > 0;
+      }, { timeout: 20000 }, simbolo);
+
+      await delay(3000);
+
+      let preco = await page.evaluate(() => {
+        const el =
+          document.querySelector(".js-symbol-last") ||
+          document.querySelector("span[class*='last']");
+
+        if (!el) return null;
+
+        const texto = el.innerText.replace(/[^\d.,]/g, '').replace(',', '.');
+        const valor = parseFloat(texto);
+
+        return isNaN(valor) ? null : valor;
+      });
+
+      if (preco !== null) {
+        const formatado = Number(preco).toFixed(3);
+        cache[url] = formatado;
+        console.log("Preço:", url, formatado);
+        return formatado;
+      }
+
+      return cache[url] || null;
+    }
+
+    // ===================== INVESTING (SEU ORIGINAL FUNCIONANDO) =====================
+
     await delay(4000);
 
     let preco = await page.evaluate(() => {
       const el =
         document.querySelector('[data-test="instrument-price-last"]') ||
-        document.querySelector('span[data-test="instrument-price-last"]') ||
         document.querySelector('.text-2xl') ||
         document.querySelector('.last-price-value');
 
@@ -114,25 +146,6 @@ async function pegarPreco(browser, url) {
       return isNaN(valor) ? null : valor;
     });
 
-    // 🔥 retry leve
-    if (preco === null) {
-      await delay(2500);
-
-      preco = await page.evaluate(() => {
-        const el =
-          document.querySelector('[data-test="instrument-price-last"]') ||
-          document.querySelector('.text-2xl') ||
-          document.querySelector('.last-price-value');
-
-        if (!el) return null;
-
-        const texto = el.innerText.replace(/[^\d.,]/g, '').replace(',', '.');
-        const valor = parseFloat(texto);
-
-        return isNaN(valor) ? null : valor;
-      });
-    }
-
     if (preco !== null) {
       const formatado = formatarPreco(preco);
       cache[url] = formatado;
@@ -140,31 +153,23 @@ async function pegarPreco(browser, url) {
       return formatado;
     }
 
-    if (cache[url]) {
-      console.log("Cache usado:", url, cache[url]);
-      return cache[url];
-    }
-
-    return null;
+    return cache[url] || null;
 
   } catch (err) {
     console.log("Erro preço:", err.message);
     return cache[url] || null;
 
   } finally {
-    try {
-      if (!page.isClosed()) await page.close();
-    } catch {}
+    try { await page.close(); } catch {}
   }
 }
 
-// ---------------- LOCK ----------------
+// ===================== LOOP =====================
+
 let rodando = false;
 
-// ---------------- ATUALIZAR ----------------
 async function atualizarDados() {
   if (rodando) return;
-
   rodando = true;
 
   try {
@@ -176,7 +181,7 @@ async function atualizarDados() {
     const resultadosKC = [];
 
     for (const c of contratosRC) {
-      const preco = await pegarPreco(browser, c.url);
+      const preco = await pegarPreco(browser, c.url, c.simbolo);
       resultadosRC.push({ nome: c.nome, preco });
     }
 
@@ -208,7 +213,8 @@ async function atualizarDados() {
   }
 }
 
-// ---------------- ROTAS ----------------
+// ===================== ROTAS =====================
+
 app.get("/", (req, res) => {
   res.send("API de Café rodando 🚀");
 });
@@ -217,12 +223,14 @@ app.get("/precos", (req, res) => {
   res.json(dados);
 });
 
-// ---------------- CRON ----------------
+// ===================== CRON =====================
+
 cron.schedule("*/5 * * * *", () => {
   atualizarDados();
 });
 
-// ---------------- START ----------------
+// ===================== START =====================
+
 const PORT = process.env.PORT || 3000;
 
 app.listen(PORT, () => {
