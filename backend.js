@@ -12,6 +12,9 @@ let dados = {
 // 🔥 CACHE PRA NUNCA MAIS VOLTAR NULL
 let cache = {};
 
+// 🔥 BROWSER GLOBAL (ESSENCIAL)
+let browserGlobal = null;
+
 const contratosRC = [
   { nome: "Atual", url: "https://www.investing.com/commodities/london-coffee?cid=1185510" },
   { nome: "Proximo", url: "https://www.investing.com/commodities/london-coffee?cid=1185511" },
@@ -28,31 +31,45 @@ const isProd = process.env.NODE_ENV === "production";
 
 // ---------------- BROWSER ----------------
 async function criarBrowser() {
+  if (browserGlobal) return browserGlobal;
+
   if (!isProd) {
     const puppeteer = require("puppeteer");
 
-    return await puppeteer.launch({
+    browserGlobal = await puppeteer.launch({
       headless: "new",
-      args: ["--no-sandbox", "--disable-setuid-sandbox"]
+      args: [
+        "--no-sandbox",
+        "--disable-setuid-sandbox",
+        "--disable-dev-shm-usage"
+      ]
+    });
+
+  } else {
+    const puppeteerCore = require("puppeteer-core");
+    const chromium = require("@sparticuz/chromium");
+
+    browserGlobal = await puppeteerCore.launch({
+      args: [
+        ...chromium.args,
+        "--no-sandbox",
+        "--disable-setuid-sandbox",
+        "--disable-dev-shm-usage"
+      ],
+      executablePath: await chromium.executablePath(),
+      headless: chromium.headless,
     });
   }
 
-  const puppeteerCore = require("puppeteer-core");
-  const chromium = require("@sparticuz/chromium");
-
-  return await puppeteerCore.launch({
-    args: chromium.args,
-    executablePath: await chromium.executablePath(),
-    headless: chromium.headless,
-  });
+  return browserGlobal;
 }
 
-// ---------------- FORMATAR PREÇO (STRING PRA NÃO PERDER ZERO) ----------------
+// ---------------- FORMATAR PREÇO ----------------
 function formatarPreco(valor) {
   if (valor < 10) {
-    return valor.toFixed(3); // 🔥 mantém 3.310
+    return valor.toFixed(3);
   } else {
-    return valor.toFixed(2); // 🔥 mantém 276.30
+    return valor.toFixed(2);
   }
 }
 
@@ -65,7 +82,7 @@ async function pegarPreco(browser, url) {
       "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36"
     );
 
-    // 🔥 BLOQUEIA LIXO PESADO
+    // 🔥 BLOQUEIA RECURSOS PESADOS
     await page.setRequestInterception(true);
     page.on("request", (req) => {
       const tipo = req.resourceType();
@@ -81,8 +98,10 @@ async function pegarPreco(browser, url) {
       timeout: 60000
     });
 
-    // 🔥 ESPERA BRUTA (SEM ERRO)
-    await new Promise(r => setTimeout(r, 5000));
+    // 🔥 ESPERA ELEMENTO REAL (CORREÇÃO PRINCIPAL)
+    await page.waitForSelector('[data-test="instrument-price-last"]', {
+      timeout: 60000
+    });
 
     let preco = await page.evaluate(() => {
       const el =
@@ -98,7 +117,7 @@ async function pegarPreco(browser, url) {
       return isNaN(valor) ? null : valor;
     });
 
-    // 🔥 RETRY
+    // 🔥 RETRY SE DER NULL
     if (preco === null) {
       await new Promise(r => setTimeout(r, 3000));
 
@@ -117,7 +136,6 @@ async function pegarPreco(browser, url) {
       });
     }
 
-    // 🔥 CACHE + FORMATAÇÃO
     if (preco !== null) {
       const precoFormatado = formatarPreco(preco);
       cache[url] = precoFormatado;
@@ -135,7 +153,7 @@ async function pegarPreco(browser, url) {
     return cache[url] || null;
 
   } finally {
-    await page.close();
+    if (!page.isClosed()) await page.close();
   }
 }
 
@@ -169,8 +187,6 @@ async function atualizarDados() {
       resultadosKC.push({ nome: c.nome, preco });
     }
 
-    await browser.close();
-
     dados = {
       arabica: resultadosKC,
       robusta: resultadosRC,
@@ -183,6 +199,12 @@ async function atualizarDados() {
 
   } catch (e) {
     console.log("Erro geral:", e.message);
+
+    // 🔥 SE CRASHAR, RECRIA BROWSER
+    if (browserGlobal) {
+      try { await browserGlobal.close(); } catch {}
+      browserGlobal = null;
+    }
 
   } finally {
     rodando = false;
