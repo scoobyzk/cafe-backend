@@ -9,10 +9,7 @@ let dados = {
   atualizadoEm: null
 };
 
-// 🔥 CACHE PRA NUNCA MAIS VOLTAR NULL
 let cache = {};
-
-// 🔥 BROWSER GLOBAL (ESSENCIAL)
 let browserGlobal = null;
 
 const contratosRC = [
@@ -28,6 +25,11 @@ const contratosKC = [
 ];
 
 const isProd = process.env.NODE_ENV === "production";
+
+// ---------------- DELAY COMPATÍVEL (SUBSTITUI waitForTimeout) ----------------
+function delay(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
 
 // ---------------- BROWSER ----------------
 async function criarBrowser() {
@@ -64,16 +66,13 @@ async function criarBrowser() {
   return browserGlobal;
 }
 
-// ---------------- FORMATAR PREÇO ----------------
+// ---------------- FORMATAR ----------------
 function formatarPreco(valor) {
-  if (valor < 10) {
-    return valor.toFixed(3);
-  } else {
-    return valor.toFixed(2);
-  }
+  if (valor < 10) return valor.toFixed(3);
+  return valor.toFixed(2);
 }
 
-// ---------------- PEGAR PREÇO ----------------
+// ---------------- PEGAR PREÇO (ROBUSTO FINAL) ----------------
 async function pegarPreco(browser, url) {
   const page = await browser.newPage();
 
@@ -82,7 +81,6 @@ async function pegarPreco(browser, url) {
       "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36"
     );
 
-    // 🔥 BLOQUEIA RECURSOS PESADOS
     await page.setRequestInterception(true);
     page.on("request", (req) => {
       const tipo = req.resourceType();
@@ -98,14 +96,13 @@ async function pegarPreco(browser, url) {
       timeout: 60000
     });
 
-    // 🔥 ESPERA ELEMENTO REAL (CORREÇÃO PRINCIPAL)
-    await page.waitForSelector('[data-test="instrument-price-last"]', {
-      timeout: 60000
-    });
+    // 🔥 delay seguro (substitui waitForTimeout)
+    await delay(4000);
 
     let preco = await page.evaluate(() => {
       const el =
         document.querySelector('[data-test="instrument-price-last"]') ||
+        document.querySelector('span[data-test="instrument-price-last"]') ||
         document.querySelector('.text-2xl') ||
         document.querySelector('.last-price-value');
 
@@ -117,9 +114,9 @@ async function pegarPreco(browser, url) {
       return isNaN(valor) ? null : valor;
     });
 
-    // 🔥 RETRY SE DER NULL
+    // 🔥 retry leve
     if (preco === null) {
-      await new Promise(r => setTimeout(r, 3000));
+      await delay(2500);
 
       preco = await page.evaluate(() => {
         const el =
@@ -137,12 +134,14 @@ async function pegarPreco(browser, url) {
     }
 
     if (preco !== null) {
-      const precoFormatado = formatarPreco(preco);
-      cache[url] = precoFormatado;
-      console.log("Preço:", url, precoFormatado);
-      return precoFormatado;
-    } else if (cache[url]) {
-      console.log("Usando cache:", url, cache[url]);
+      const formatado = formatarPreco(preco);
+      cache[url] = formatado;
+      console.log("Preço:", url, formatado);
+      return formatado;
+    }
+
+    if (cache[url]) {
+      console.log("Cache usado:", url, cache[url]);
       return cache[url];
     }
 
@@ -153,7 +152,9 @@ async function pegarPreco(browser, url) {
     return cache[url] || null;
 
   } finally {
-    if (!page.isClosed()) await page.close();
+    try {
+      if (!page.isClosed()) await page.close();
+    } catch {}
   }
 }
 
@@ -162,10 +163,7 @@ let rodando = false;
 
 // ---------------- ATUALIZAR ----------------
 async function atualizarDados() {
-  if (rodando) {
-    console.log("Já está rodando, ignorando...");
-    return;
-  }
+  if (rodando) return;
 
   rodando = true;
 
@@ -200,7 +198,6 @@ async function atualizarDados() {
   } catch (e) {
     console.log("Erro geral:", e.message);
 
-    // 🔥 SE CRASHAR, RECRIA BROWSER
     if (browserGlobal) {
       try { await browserGlobal.close(); } catch {}
       browserGlobal = null;
