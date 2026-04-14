@@ -21,9 +21,9 @@ const contratosRC = [
 ];
 
 const contratosKC = [
-  { nome: "Atual", url: "https://www.investing.com/commodities/us-coffee-c" },
-  { nome: "Proximo", url: "https://www.investing.com/commodities/us-coffee-c?cid=1186961" },
-  { nome: "Futuro", url: "https://www.investing.com/commodities/us-coffee-c?cid=1186962" }
+  { nome: "Maio", url: "https://www.tradingview.com/symbols/ICEUS-KC1!/?contract=KCK2026", simbolo: "KCK2026" },
+  { nome: "Julho", url: "https://www.tradingview.com/symbols/ICEUS-KC1!/?contract=KCN2026", simbolo: "KCN2026" },
+  { nome: "Setembro", url: "https://www.tradingview.com/symbols/ICEUS-KC1!/?contract=KCU2026", simbolo: "KCU2026" }
 ];
 
 // ===================== UTIL =====================
@@ -129,7 +129,6 @@ async function pegarPreco(browser, url, simbolo = null) {
     }
 
     // ===================== INVESTING (SEU ORIGINAL FUNCIONANDO) =====================
-
     await delay(4000);
 
     let preco = await page.evaluate(() => {
@@ -186,16 +185,14 @@ async function atualizarDados() {
     }
 
     for (const c of contratosKC) {
-      const preco = await pegarPreco(browser, c.url);
+      const preco = await pegarPreco(browser, c.url, c.simbolo);
       resultadosKC.push({ nome: c.nome, preco });
     }
 
     dados = {
       arabica: resultadosKC,
       robusta: resultadosRC,
-      atualizadoEm: new Date().toLocaleString("pt-BR", {
-        timeZone: "America/Sao_Paulo"
-      })
+      atualizadoEm: new Date().toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" })
     };
 
     console.log("Atualizado com sucesso!");
