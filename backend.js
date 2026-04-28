@@ -34,6 +34,28 @@ function delay(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+// ===================== 🆕 CONTROLE DE HORÁRIO =====================
+
+function isHorarioPermitido() {
+  const now = new Date();
+
+  const brasilTime = new Date(
+    now.toLocaleString("en-US", { timeZone: "America/Sao_Paulo" })
+  );
+
+  const day = brasilTime.getDay(); // 0 domingo, 6 sábado
+  const hours = brasilTime.getHours();
+  const minutes = brasilTime.getMinutes();
+
+  if (day === 0 || day === 6) return false;
+
+  const currentMinutes = hours * 60 + minutes;
+  const startMinutes = 4 * 60 + 55; // 04:55
+  const endMinutes = 16 * 60 + 5;   // 16:05
+
+  return currentMinutes >= startMinutes && currentMinutes <= endMinutes;
+}
+
 // ===================== BROWSER =====================
 
 async function criarBrowser() {
@@ -93,7 +115,6 @@ async function pegarPreco(browser, url, simbolo = null) {
       timeout: 60000
     });
 
-    // ===================== TRADINGVIEW (FIX REAL) =====================
     if (url.includes("tradingview.com")) {
 
       await page.waitForSelector("body");
@@ -128,7 +149,6 @@ async function pegarPreco(browser, url, simbolo = null) {
       return cache[url] || null;
     }
 
-    // ===================== INVESTING (SEU ORIGINAL FUNCIONANDO) =====================
     await delay(4000);
 
     let preco = await page.evaluate(() => {
@@ -223,6 +243,7 @@ app.get("/precos", (req, res) => {
 // ===================== CRON =====================
 
 cron.schedule("*/5 * * * *", () => {
+  if (!isHorarioPermitido()) return;
   atualizarDados();
 });
 
@@ -232,5 +253,8 @@ const PORT = process.env.PORT || 3000;
 
 app.listen(PORT, () => {
   console.log(`Servidor rodando na porta ${PORT}`);
-  atualizarDados();
+
+  if (isHorarioPermitido()) {
+    atualizarDados();
+  }
 });
