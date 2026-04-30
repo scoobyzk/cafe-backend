@@ -12,21 +12,17 @@ let dados = {
 let cache = {};
 let browserGlobal = null;
 
-// ===================== CONTRATOS =====================
-
 const contratosRC = [
-  { nome: "Maio", url: "https://www.tradingview.com/symbols/ICEEUR-RC1!/?contract=RCK2026", simbolo: "RCK2026" },
-  { nome: "Julho", url: "https://www.tradingview.com/symbols/ICEEUR-RC1!/?contract=RCN2026", simbolo: "RCN2026" },
-  { nome: "Setembro", url: "https://www.tradingview.com/symbols/ICEEUR-RC1!/?contract=RCU2026", simbolo: "RCU2026" }
+  { nome: "Julho", url: "https://www.tradingview.com/symbols/ICEEUR-RC1!/?contract=RCN2026" },
+  { nome: "Setembro", url: "https://br.tradingview.com/symbols/ICEEUR-RC1!/?contract=RCU2026" },
+  { nome: "Novembro", url: "https://br.tradingview.com/symbols/ICEEUR-RC1!/?contract=RCX2026" }
 ];
 
 const contratosKC = [
-  { nome: "Maio", url: "https://www.tradingview.com/symbols/ICEUS-KC1!/?contract=KCK2026", simbolo: "KCK2026" },
-  { nome: "Julho", url: "https://www.tradingview.com/symbols/ICEUS-KC1!/?contract=KCN2026", simbolo: "KCN2026" },
-  { nome: "Setembro", url: "https://www.tradingview.com/symbols/ICEUS-KC1!/?contract=KCU2026", simbolo: "KCU2026" }
+  { nome: "Maio", url: "https://www.tradingview.com/symbols/ICEUS-KC1!/?contract=KCK2026" },
+  { nome: "Julho", url: "https://www.tradingview.com/symbols/ICEUS-KC1!/?contract=KCN2026" },
+  { nome: "Setembro", url: "https://www.tradingview.com/symbols/ICEUS-KC1!/?contract=KCU2026" }
 ];
-
-// ===================== UTIL =====================
 
 const isProd = process.env.NODE_ENV === "production";
 
@@ -34,29 +30,24 @@ function delay(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-// ===================== 🆕 CONTROLE DE HORÁRIO =====================
-
 function isHorarioPermitido() {
   const now = new Date();
-
   const brasilTime = new Date(
     now.toLocaleString("en-US", { timeZone: "America/Sao_Paulo" })
   );
 
-  const day = brasilTime.getDay(); // 0 domingo, 6 sábado
+  const day = brasilTime.getDay();
   const hours = brasilTime.getHours();
   const minutes = brasilTime.getMinutes();
 
   if (day === 0 || day === 6) return false;
 
   const currentMinutes = hours * 60 + minutes;
-  const startMinutes = 4 * 60 + 55; // 04:55
-  const endMinutes = 16 * 60 + 5;   // 16:05
+  const startMinutes = 4 * 60 + 55;
+  const endMinutes = 16 * 60 + 5;
 
   return currentMinutes >= startMinutes && currentMinutes <= endMinutes;
 }
-
-// ===================== BROWSER =====================
 
 async function criarBrowser() {
   if (browserGlobal) return browserGlobal;
@@ -66,7 +57,7 @@ async function criarBrowser() {
 
     browserGlobal = await puppeteer.launch({
       headless: "new",
-      args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"]
+      args: ["--no-sandbox", "--disable-setuid-sandbox"]
     });
 
   } else {
@@ -74,7 +65,7 @@ async function criarBrowser() {
     const chromium = require("@sparticuz/chromium");
 
     browserGlobal = await puppeteerCore.launch({
-      args: [...chromium.args, "--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"],
+      args: [...chromium.args],
       executablePath: await chromium.executablePath(),
       headless: chromium.headless,
     });
@@ -83,101 +74,63 @@ async function criarBrowser() {
   return browserGlobal;
 }
 
-// ===================== FORMATAR =====================
-
-function formatarPreco(valor) {
-  if (valor < 10) return valor.toFixed(3);
-  return valor.toFixed(2);
-}
-
 // ===================== SCRAPER =====================
 
-async function pegarPreco(browser, url, simbolo = null) {
+async function pegarPreco(browser, url) {
   const page = await browser.newPage();
 
   try {
-    await page.setUserAgent(
-      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36"
-    );
+    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 60000 });
 
-    await page.setRequestInterception(true);
-    page.on("request", (req) => {
-      const tipo = req.resourceType();
-      if (["image", "stylesheet", "font", "media"].includes(tipo)) {
-        req.abort();
-      } else {
-        req.continue();
-      }
+    await page.waitForSelector("body");
+    await delay(3000);
+
+    let result = await page.evaluate(() => {
+      const get = (selector) => {
+        const el = document.querySelector(selector);
+        return el ? el.innerText.trim() : null;
+      };
+
+      const preco =
+        get(".js-symbol-last") ||
+        get("span[class*='last']");
+
+      // 🔥 PEGA DIRETO OS PONTOS (SEM PROCESSAR)
+      const pontos =
+        get(".js-symbol-change") ||
+        get("span[class*='change']");
+
+      return {
+        preco,
+        pontos
+      };
     });
 
-    await page.goto(url, {
-      waitUntil: "domcontentloaded",
-      timeout: 60000
-    });
+    let { preco, pontos } = result;
 
-    if (url.includes("tradingview.com")) {
-
-      await page.waitForSelector("body");
-
-      await page.waitForFunction((simbolo) => {
-        const el = document.querySelector(".js-symbol-last, span[class*='last']");
-        return el && el.innerText && el.innerText.length > 0;
-      }, { timeout: 20000 }, simbolo);
-
-      await delay(3000);
-
-      let preco = await page.evaluate(() => {
-        const el =
-          document.querySelector(".js-symbol-last") ||
-          document.querySelector("span[class*='last']");
-
-        if (!el) return null;
-
-        const texto = el.innerText.replace(/[^\d.,]/g, '').replace(',', '.');
-        const valor = parseFloat(texto);
-
-        return isNaN(valor) ? null : valor;
-      });
-
-      if (preco !== null) {
-        const formatado = Number(preco).toFixed(3);
-        cache[url] = formatado;
-        console.log("Preço:", url, formatado);
-        return formatado;
-      }
-
-      return cache[url] || null;
+    if (preco) {
+      const num = parseFloat(preco.replace(',', '.'));
+      preco = Number(num).toFixed(3);
+    } else {
+      preco = cache[url]?.preco || null;
     }
 
-    await delay(4000);
+    // 🔥 mantém exatamente como vem (-81 ou +81)
+    pontos = pontos ?? cache[url]?.pontos ?? null;
 
-    let preco = await page.evaluate(() => {
-      const el =
-        document.querySelector('[data-test="instrument-price-last"]') ||
-        document.querySelector('.text-2xl') ||
-        document.querySelector('.last-price-value');
+    cache[url] = { preco, pontos };
 
-      if (!el) return null;
+    console.log("Dados:", url, { preco, pontos });
 
-      const texto = el.innerText.replace(/[^\d.,]/g, '').replace(',', '.');
-      const valor = parseFloat(texto);
-
-      return isNaN(valor) ? null : valor;
-    });
-
-    if (preco !== null) {
-      const formatado = formatarPreco(preco);
-      cache[url] = formatado;
-      console.log("Preço:", url, formatado);
-      return formatado;
-    }
-
-    return cache[url] || null;
+    return { preco, pontos };
 
   } catch (err) {
-    console.log("Erro preço:", err.message);
-    return cache[url] || null;
+    console.log("Erro:", err.message);
 
+    return {
+      preco: cache[url]?.preco || null,
+      pontos: cache[url]?.pontos || null
+    };
   } finally {
     try { await page.close(); } catch {}
   }
@@ -192,21 +145,19 @@ async function atualizarDados() {
   rodando = true;
 
   try {
-    console.log("Atualizando dados...");
-
     const browser = await criarBrowser();
 
     const resultadosRC = [];
     const resultadosKC = [];
 
     for (const c of contratosRC) {
-      const preco = await pegarPreco(browser, c.url, c.simbolo);
-      resultadosRC.push({ nome: c.nome, preco });
+      const data = await pegarPreco(browser, c.url);
+      resultadosRC.push({ nome: c.nome, ...data });
     }
 
     for (const c of contratosKC) {
-      const preco = await pegarPreco(browser, c.url, c.simbolo);
-      resultadosKC.push({ nome: c.nome, preco });
+      const data = await pegarPreco(browser, c.url);
+      resultadosKC.push({ nome: c.nome, ...data });
     }
 
     dados = {
@@ -215,16 +166,10 @@ async function atualizarDados() {
       atualizadoEm: new Date().toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" })
     };
 
-    console.log("Atualizado com sucesso!");
+    console.log("Atualizado!");
 
   } catch (e) {
     console.log("Erro geral:", e.message);
-
-    if (browserGlobal) {
-      try { await browserGlobal.close(); } catch {}
-      browserGlobal = null;
-    }
-
   } finally {
     rodando = false;
   }
@@ -252,7 +197,7 @@ cron.schedule("*/5 * * * *", () => {
 const PORT = process.env.PORT || 3000;
 
 app.listen(PORT, () => {
-  console.log(`Servidor rodando na porta ${PORT}`);
+  console.log(`Rodando na porta ${PORT}`);
 
   if (isHorarioPermitido()) {
     atualizarDados();
