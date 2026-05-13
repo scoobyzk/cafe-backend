@@ -19,9 +19,9 @@ const contratosRC = [
 ];
 
 const contratosKC = [
-  { nome: "Maio", url: "https://www.tradingview.com/symbols/ICEUS-KC1!/?contract=KCK2026" },
   { nome: "Julho", url: "https://www.tradingview.com/symbols/ICEUS-KC1!/?contract=KCN2026" },
-  { nome: "Setembro", url: "https://www.tradingview.com/symbols/ICEUS-KC1!/?contract=KCU2026" }
+  { nome: "Setembro", url: "https://www.tradingview.com/symbols/ICEUS-KC1!/?contract=KCU2026" },
+  { nome: "Dezembro", url: "https://www.tradingview.com/symbols/ICEUS-KC1!/?contract=KCZ2026" }
 ];
 
 const isProd = process.env.NODE_ENV === "production";
